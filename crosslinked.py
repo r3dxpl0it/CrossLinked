@@ -36,11 +36,16 @@ class ScrapeEngine():
         self.search_links = 0  # Total Links found by search engine
         self.name_count   = 0  # Total names found from linkedin
         found_names       = 0  # Local count to detect when no new names are found
-
+        self.attempts     = 0
         while self.running:
             # End on timeout OR when no more LinkedIn names are found
             if self.search_links > 0 and found_names == self.name_count:
-                return self.linkedin
+                if self.attempts > 30 : 
+                    return self.linkedin
+                else : 
+                    self.attempts += 1 
+
+
             found_names = self.name_count
             try:
                 self.name_search(search_engine, self.search_links, company_name, jitter)
@@ -68,8 +73,8 @@ class ScrapeEngine():
         sleep(jitter)
 
     def extract_linkedin(self, link, company_name):
-        if debug:
-            print("[*] Parsing Linkedin User: {}".format(link.text))
+       
+
         if safe and company_name.lower() not in link.text.lower():
             return False
         try:
@@ -110,11 +115,22 @@ class ScrapeEngine():
                 raise Exception("\'{}\' Failed name parsing".format(link.text))
 
             if name not in self.linkedin:
+                
+                       
+                linkedin_link = link.text.split('linkedin.com/')
+
+                try : 
+                    linkedin_link = str(link).split('href="')[1].split('">')[0]
+                except : 
+                    linkedin_link = None 
+                if debug : 
+                    print("[*] Found: {}".format(name) ,linkedin_link)
+                
                 self.linkedin[name] = {}
-                self.linkedin[name]['last'] = name.split(' ')[1].lower().rstrip().lstrip()
-                self.linkedin[name]['first'] = name.split(' ')[0].lower().rstrip().lstrip()
-                self.linkedin[name]['title'] = title.strip().lower().rstrip().lstrip()
+                self.linkedin[name]['link'] = linkedin_link
+
                 return True
+
         except Exception as e:
             if debug:
                 print("[!] Debug: {}".format(str(e)))
@@ -143,37 +159,27 @@ def get_request(link, timeout):
         'Upgrade-Insecure-Requests': '1'}
     return requests.get(link, headers=head, verify=False, timeout=timeout)
 
-def email_formatter(nformat, first, last):
-    name = nformat
-    name = name.replace('{f}', first[0])
-    name = name.replace('{first}', first)
-    name = name.replace('{l}', last[0])
-    name = name.replace('{last}', last)
-
-    openFile = open(outfile, 'a')
-    openFile.write('{}\n'.format(name))
-    openFile.close()
+import json 
 
 def main(args):
     found_names = {}
-    search = ['google', 'bing']
+    search = ['bing']
     for site in search:
         print("[*] Searching {} for valid employee names at {}".format(site, args.company_name))
         lkin = ScrapeEngine().search(site, args.company_name, args.timeout, args.jitter)
         if lkin:
             for name, data in lkin.items():
                 try:
-                    id = data['first'] + ":" + data['last']
-                    if name and id not in found_names:
-                        found_names[id] = data
-                        email_formatter(args.nformat,  data['first'], data['last'])
+                    if name not in found_names:
+                        found_names[name] = data['link']
+
                 except Exception as e:
                     if debug:
                         print("[!] Debug: {}".format(str(e)))
-    if args.verbose:
-        for id, data in found_names.items():
-            print("[+] {}\t: {}".format(data['first'] + " " + data['last'], data['title']))
-    print("[+] {} complete, {} unique names found!".format(args.outfile, len(found_names)))
+    
+    print("[+] {} unique names found!".format(len(found_names)))
+    with open(args.outfile, 'w') as outfile:
+        json.dump(found_names, outfile)
 
 if __name__ == '__main__':
     VERSION = "0.0.5"
@@ -181,14 +187,15 @@ if __name__ == '__main__':
     args.add_argument('--debug', dest="debug", action='store_true',help=argparse.SUPPRESS)
     args.add_argument('-t', dest='timeout', type=int, default=25,help='Timeout [seconds] for search threads (Default: 25)')
     args.add_argument('-j', dest='jitter', type=float, default=0,help='Jitter for scraping evasion (Default: 0)')
-    args.add_argument('-o', dest='outfile', type=str, default='names.txt',help='Change name of output file (default: names.txt')
-    args.add_argument('-f', dest='nformat', type=str, required=True, help='Format names, ex: \'domain\{f}{last}\', \'{first}.{last}@domain.com\'')
+    args.add_argument('-o', dest='outfile', type=str, required = True ,help='Change name of output file (default: names.txt')
     args.add_argument('-s', "--safe", dest="safe", action='store_true',help="Only parse names with company in title (Reduces false positives)")
     args.add_argument('-v', dest="verbose", action='store_true', help="Show names and titles recovered after enumeration")
     args.add_argument(dest='company_name', nargs='+', help='Target company name')
     args = args.parse_args()
 
-    outfile = args.outfile
+    if '.json' not in args.outfile : 
+        args.outfile = args.outfile + '.json'
+
     safe = args.safe
     debug = args.debug
     args.company_name = args.company_name[0]
